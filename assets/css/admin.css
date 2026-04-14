@@ -1,0 +1,96 @@
+.ud-nap-wrap .ud-nap-progress {
+	margin-top: 20px;
+}
+
+.ud-nap-wrap .ud-nap-progress .ud-nap-status {
+	margin: 0 0 8px;
+	font-style: italic;
+}
+
+.ud-nap-wrap .ud-nap-result {
+	margin-top: 20px;
+}
+
+.ud-nap-wrap .ud-nap-columns-grid {
+	display: grid;
+	grid-template-columns: repeat( auto-fill, minmax( 240px, 1fr ) );
+	gap: 6px 16px;
+	margin: 10px 0 20px;
+	padding: 12px;
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	max-width: 900px;
+}
+
+.ud-nap-wrap .ud-nap-column {
+	display: block;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.ud-nap-wrap .ud-nap-column-label {
+	display: inline;
+}
+
+.ud-nap-wrap .ud-nap-column-key {
+	display: block;
+	margin-left: 22px;
+	font-size: 11px;
+	color: #787c82;
+	font-family: Consolas, Monaco, monospace;
+}
+
+.ud-nap-wrap .ud-nap-discovered {
+	max-height: 220px;
+	overflow: auto;
+	background: #f6f7f7;
+	border: 1px solid #dcdcde;
+	padding: 8px 12px;
+	margin: 6px 0 0;
+}
+
+.ud-nap-wrap .ud-nap-discovered li {
+	margin: 0 0 2px;
+}
+
+.ud-nap-wrap .ud-nap-columns-saved {
+	display: none;
+	margin-left: 10px;
+	font-size: 13px;
+	font-style: italic;
+	color: #50575e;
+}
+
+.ud-nap-wrap .ud-nap-columns-saved.is-saved {
+	color: #008a20;
+	font-style: normal;
+}
+
+.ud-nap-wrap .ud-nap-columns-saved.is-error {
+	color: #d63638;
+	font-style: normal;
+}
+
+.ud-nap-wrap .ud-nap-payment-methods {
+	display: grid;
+	grid-template-columns: repeat( auto-fill, minmax( 240px, 1fr ) );
+	gap: 4px 16px;
+	padding: 10px 12px;
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	max-width: 700px;
+}
+
+.ud-nap-wrap .ud-nap-payment-method-label {
+	display: block;
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.ud-nap-wrap .ud-nap-payment-method-id {
+	display: inline-block;
+	margin-left: 6px;
+	font-size: 11px;
+	color: #787c82;
+	font-family: Consolas, Monaco, monospace;
+}
