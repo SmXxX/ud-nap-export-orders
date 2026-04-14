@@ -39,8 +39,10 @@ final class UD_NAP_Exporter_Plugin {
 	private function load_dependencies() {
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-settings.php';
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-query.php';
+		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-doc-counter.php';
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-xml-writer.php';
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-exporter.php';
+		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-receipt.php';
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-xlsx-writer.php';
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-csv-exporter.php';
 		require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-admin.php';

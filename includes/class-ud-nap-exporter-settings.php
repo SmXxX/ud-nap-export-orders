@@ -21,12 +21,24 @@ class UD_NAP_Exporter_Settings {
 		return array(
 			// Company / shop identification reported in the SAF-T header.
 			'shop_unique_id'        => '',
+			'e_shop_type'           => '1',
+			'domain_name'           => '',
 			'company_name'          => '',
 			'company_eik'           => '',
 			'company_vat'           => '',
 			'company_address'       => '',
 			'company_city'          => '',
 			'company_country'       => 'BG',
+			'company_email'         => '',
+
+			// Sequential fiscal document number counter (doc_n).
+			'doc_n_start'           => 2000000001,
+
+			// Payment-method → NAP paym code map.
+			// Keys are WooCommerce gateway IDs, values are NAP codes (see paym_codes()).
+			'payment_map'           => array(
+				'cod'    => '5',
+			),
 
 			// XML field mapping.
 			'meta_transaction_id'   => '_transaction_id',
@@ -57,6 +69,32 @@ class UD_NAP_Exporter_Settings {
 	 *
 	 * @return array<string,string> column key => label.
 	 */
+	/**
+	 * Official NAP payment method codes used in the <paym> element of the
+	 * audit XML (per Ordinance N-18, Annex 38 — alternative reporting method).
+	 *
+	 * @return array<string,string> code => Bulgarian label.
+	 */
+	public static function paym_codes() {
+		return array(
+			'1' => '1 — В брой',
+			'2' => '2 — С чек',
+			'3' => '3 — Ваучер',
+			'4' => '4 — Банков път / прехвърляне',
+			'5' => '5 — Наложен платеж (COD)',
+			'6' => '6 — Кредитна/дебитна карта — виртуален POS',
+			'7' => '7 — Електронен портфейл (PayPal и др.)',
+			'8' => '8 — Други',
+		);
+	}
+
+	public static function e_shop_types() {
+		return array(
+			'1' => '1 — Собствен електронен магазин',
+			'2' => '2 — Платформа на трета страна',
+		);
+	}
+
 	public static function standard_csv_columns() {
 		return array(
 			'order_number'          => 'Номер на поръчка',
@@ -241,14 +279,32 @@ class UD_NAP_Exporter_Settings {
 
 		if ( 'xml' === $section || 'all' === $section ) {
 			$out['shop_unique_id']        = isset( $input['shop_unique_id'] ) ? sanitize_text_field( $input['shop_unique_id'] ) : '';
+			$out['e_shop_type']           = isset( $input['e_shop_type'] ) && array_key_exists( $input['e_shop_type'], self::e_shop_types() )
+				? sanitize_text_field( $input['e_shop_type'] ) : '1';
+			$out['domain_name']           = isset( $input['domain_name'] ) ? esc_url_raw( trim( $input['domain_name'] ) ) : '';
 			$out['company_name']          = isset( $input['company_name'] ) ? sanitize_text_field( $input['company_name'] ) : '';
 			$out['company_eik']           = isset( $input['company_eik'] ) ? sanitize_text_field( $input['company_eik'] ) : '';
 			$out['company_vat']           = isset( $input['company_vat'] ) ? sanitize_text_field( $input['company_vat'] ) : '';
 			$out['company_address']       = isset( $input['company_address'] ) ? sanitize_text_field( $input['company_address'] ) : '';
 			$out['company_city']          = isset( $input['company_city'] ) ? sanitize_text_field( $input['company_city'] ) : '';
 			$out['company_country']       = isset( $input['company_country'] ) ? strtoupper( sanitize_text_field( $input['company_country'] ) ) : 'BG';
+			$out['company_email']         = isset( $input['company_email'] ) ? sanitize_email( $input['company_email'] ) : '';
+			$out['doc_n_start']           = isset( $input['doc_n_start'] ) ? max( 1, absint( $input['doc_n_start'] ) ) : 2000000001;
 			$out['meta_transaction_id']   = isset( $input['meta_transaction_id'] ) ? sanitize_text_field( $input['meta_transaction_id'] ) : '_transaction_id';
 			$out['meta_payment_provider'] = isset( $input['meta_payment_provider'] ) ? sanitize_text_field( $input['meta_payment_provider'] ) : '';
+
+			// Payment method → NAP paym code map.
+			$map_in  = isset( $input['payment_map'] ) && is_array( $input['payment_map'] ) ? $input['payment_map'] : array();
+			$valid_codes = array_keys( self::paym_codes() );
+			$map_out = array();
+			foreach ( $map_in as $gateway_id => $code ) {
+				$gateway_id = sanitize_key( $gateway_id );
+				$code       = sanitize_text_field( $code );
+				if ( '' !== $gateway_id && in_array( $code, $valid_codes, true ) ) {
+					$map_out[ $gateway_id ] = $code;
+				}
+			}
+			$out['payment_map'] = $map_out;
 		}
 
 		if ( 'csv' === $section || 'all' === $section ) {

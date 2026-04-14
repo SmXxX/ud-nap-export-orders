@@ -20,10 +20,14 @@ class UD_NAP_Exporter_Ajax {
 	/** @var UD_NAP_Exporter_CSV_Exporter */
 	private $csv_exporter;
 
+	/** @var UD_NAP_Exporter_Receipt */
+	private $receipt;
+
 	public function __construct( UD_NAP_Exporter_Settings $settings ) {
 		$this->settings     = $settings;
 		$this->xml_exporter = new UD_NAP_Exporter_Exporter( $settings );
 		$this->csv_exporter = new UD_NAP_Exporter_CSV_Exporter( $settings );
+		$this->receipt      = new UD_NAP_Exporter_Receipt( $settings );
 	}
 
 	public function hooks() {
@@ -39,6 +43,145 @@ class UD_NAP_Exporter_Ajax {
 
 		// Inline auto-save for the CSV column picker.
 		add_action( 'wp_ajax_ud_nap_save_columns', array( $this, 'handle_save_columns' ) );
+
+		// НАП receipt PDF.
+		add_action( 'admin_post_ud_nap_receipt', array( $this, 'handle_receipt' ) );
+
+		// Order edit screen button + orders list row action.
+		add_action( 'add_meta_boxes', array( $this, 'register_receipt_metabox' ) );
+		add_filter( 'woocommerce_admin_order_actions', array( $this, 'add_orders_list_action' ), 10, 2 );
+		add_filter( 'post_row_actions', array( $this, 'add_legacy_row_action' ), 10, 2 );
+
+		// Attach receipt PDF to customer order emails.
+		add_filter( 'woocommerce_email_attachments', array( $this, 'attach_receipt_to_emails' ), 10, 3 );
+	}
+
+	/**
+	 * Attach the НАП receipt PDF to customer-facing "processing" and "completed"
+	 * order emails. The fiscal document number (doc_n) is allocated on first
+	 * render and persisted on the order, so the emailed PDF is identical to
+	 * anything reprinted later.
+	 *
+	 * @param array              $attachments
+	 * @param string             $email_id
+	 * @param WC_Abstract_Order  $order
+	 * @return array
+	 */
+	public function attach_receipt_to_emails( $attachments, $email_id, $order ) {
+		$allowed = apply_filters(
+			'ud_nap_receipt_email_ids',
+			array( 'customer_processing_order', 'customer_completed_order' )
+		);
+		if ( ! in_array( $email_id, (array) $allowed, true ) ) {
+			return $attachments;
+		}
+		if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+			return $attachments;
+		}
+
+		$path = $this->receipt->render_to_file( $order );
+		if ( $path ) {
+			$attachments[] = $path;
+		}
+		return $attachments;
+	}
+
+	/**
+	 * Streams a single НАП receipt PDF inline. Works for both classic (shop_order
+	 * posts) and HPOS order URLs — the order ID is taken from the query arg.
+	 */
+	public function handle_receipt() {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_die( esc_html__( 'Нямате достатъчни права.', 'ud-nap-orders-exporter' ) );
+		}
+		$order_id = isset( $_GET['order_id'] ) ? absint( $_GET['order_id'] ) : 0;
+		check_admin_referer( 'ud_nap_receipt_' . $order_id );
+		$order = $order_id ? wc_get_order( $order_id ) : null;
+		if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+			wp_die( esc_html__( 'Поръчката не е намерена.', 'ud-nap-orders-exporter' ) );
+		}
+		$this->receipt->stream( $order );
+	}
+
+	public function register_receipt_metabox() {
+		// Classic post-type order screen.
+		add_meta_box(
+			'ud-nap-receipt',
+			__( 'НАП електронна разписка', 'ud-nap-orders-exporter' ),
+			array( $this, 'render_receipt_metabox' ),
+			'shop_order',
+			'side',
+			'default'
+		);
+		// HPOS order screen.
+		if ( class_exists( 'Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController' ) ) {
+			add_meta_box(
+				'ud-nap-receipt',
+				__( 'НАП електронна разписка', 'ud-nap-orders-exporter' ),
+				array( $this, 'render_receipt_metabox' ),
+				wc_get_page_screen_id( 'shop-order' ),
+				'side',
+				'default'
+			);
+		}
+	}
+
+	public function render_receipt_metabox( $post_or_order ) {
+		$order = ( $post_or_order instanceof WP_Post )
+			? wc_get_order( $post_or_order->ID )
+			: $post_or_order;
+		if ( ! $order ) {
+			return;
+		}
+		$url = $this->receipt_url( $order->get_id() );
+		echo '<p>' . esc_html__( 'Генерира PDF документ за регистриране на продажба по Наредба Н-18.', 'ud-nap-orders-exporter' ) . '</p>';
+		echo '<p><a class="button button-primary" style="padding:4px 14px;" target="_blank" href="' . esc_url( $url ) . '">' . esc_html__( 'Отвори разписка (PDF)', 'ud-nap-orders-exporter' ) . '</a></p>';
+	}
+
+	/**
+	 * HPOS orders list row actions.
+	 *
+	 * @param array    $actions
+	 * @param WC_Order $order
+	 */
+	public function add_orders_list_action( $actions, $order ) {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return $actions;
+		}
+		$actions['ud_nap_receipt'] = array(
+			'url'    => $this->receipt_url( $order->get_id() ),
+			'name'   => __( 'Е-разписка', 'ud-nap-orders-exporter' ),
+			'action' => 'ud-nap-receipt',
+		);
+		return $actions;
+	}
+
+	/**
+	 * Classic (non-HPOS) orders list row action.
+	 */
+	public function add_legacy_row_action( $actions, $post ) {
+		if ( 'shop_order' !== ( $post->post_type ?? '' ) ) {
+			return $actions;
+		}
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return $actions;
+		}
+		$url = $this->receipt_url( $post->ID );
+		$actions['ud_nap_receipt'] = '<a target="_blank" href="' . esc_url( $url ) . '">' . esc_html__( 'Е-разписка (PDF)', 'ud-nap-orders-exporter' ) . '</a>';
+		return $actions;
+	}
+
+	private function receipt_url( $order_id ) {
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'action'   => 'ud_nap_receipt',
+					'order_id' => (int) $order_id,
+				),
+				admin_url( 'admin-post.php' )
+			),
+			'ud_nap_receipt_' . (int) $order_id
+		);
 	}
 
 	/**

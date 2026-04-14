@@ -1,23 +1,30 @@
 <?php
 /**
- * SAF-T XML writer.
+ * НАП audit XML writer. Produces the format defined by Ordinance N-18 for
+ * e-commerce sites using the alternative reporting method — matches the
+ * reference sample shipped by the client:
  *
- * Uses ext/xmlwriter for memory-efficient streaming. The exporter writes the
- * file in stages across multiple AJAX requests:
+ *   <audit>
+ *     <eik/><e_shop_n/><domain_name/><e_shop_type/>
+ *     <creation_date/><mon/><god/>
+ *     <order>
+ *       <orderenum>
+ *         <ord_n/><ord_d/><doc_n/><doc_date/>
+ *         <art><artenum>...</artenum>...</art>
+ *         <ord_total1/><ord_disc/><ord_vat/><ord_total2/>
+ *         <paym/><trans_n/><proc_id/>
+ *       </orderenum>
+ *       ...
+ *     </order>
+ *     <r_ord/><r_total/>
+ *   </audit>
  *
- *   1. write_header()  — opens the root + Header section, returns markup.
- *   2. write_invoice() — emits a single <Invoice> fragment for an order.
- *   3. write_refund()  — emits a single <Invoice> fragment with refund flag.
- *   4. write_footer()  — closes the SourceDocuments / root tags.
+ * Prices in the shop are stored VAT-inclusive, so for each line we derive the
+ * net price and VAT amount by dividing by (1 + rate).
  *
- * The fragments are appended to the on-disk export file by the exporter, so
- * the writer itself never has to keep the whole document in memory.
- *
- * NOTE: tag names follow the OECD SAF-T 2.0 model adapted to the Bulgarian
- * Ordinance N-18 reporting structure. The exact element names should be
- * cross-checked against the official XSD published by НАП before going to
- * production — every element name lives in this single class to make that
- * easy.
+ * The file is written in three stages (header → per-order fragments → footer)
+ * so the exporter can stream thousands of orders to disk without loading them
+ * into memory at once.
  *
  * @package UD_NAP_Orders_Exporter
  */
@@ -31,210 +38,267 @@ class UD_NAP_Exporter_XML_Writer {
 	/** @var UD_NAP_Exporter_Settings */
 	private $settings;
 
-	public function __construct( UD_NAP_Exporter_Settings $settings ) {
-		$this->settings = $settings;
+	/** @var UD_NAP_Exporter_Doc_Counter */
+	private $doc_counter;
+
+	/** Running totals for the <r_ord>/<r_total> footer. */
+	private $refund_count = 0;
+	private $refund_total = 0.0;
+
+	public function __construct( UD_NAP_Exporter_Settings $settings, UD_NAP_Exporter_Doc_Counter $doc_counter ) {
+		$this->settings    = $settings;
+		$this->doc_counter = $doc_counter;
 	}
 
 	/**
-	 * Build the XML prologue + opening Header section.
+	 * Opens <audit>, writes the shop header, opens <order>.
 	 *
-	 * @param string $date_from Y-m-d.
-	 * @param string $date_to   Y-m-d.
+	 * @param string $date_from Y-m-d
+	 * @param string $date_to   Y-m-d
 	 * @return string
 	 */
 	public function write_header( $date_from, $date_to ) {
 		$s = $this->settings->get_all();
 
-		$w = new XMLWriter();
-		$w->openMemory();
-		$w->setIndent( true );
-		$w->setIndentString( '  ' );
-		$w->startDocument( '1.0', 'UTF-8' );
+		// NAP expects mon/god = the reporting month/year. We infer it from
+		// date_from; if the range straddles months we still use the start.
+		$mon = date( 'm', strtotime( $date_from ) );
+		$god = date( 'Y', strtotime( $date_from ) );
 
-		$w->startElement( 'AuditFile' );
-		$w->writeAttribute( 'xmlns', 'urn:bg:nap:saft:1.0' );
-
-		// ---- Header ----
-		$w->startElement( 'Header' );
-		$w->writeElement( 'AuditFileVersion', '1.0' );
-		$w->writeElement( 'AuditFileCountry', $s['company_country'] ? $s['company_country'] : 'BG' );
-		$w->writeElement( 'AuditFileDateCreated', gmdate( 'Y-m-d' ) );
-		$w->writeElement( 'SoftwareCompanyName', 'Unbelievable Digital' );
-		$w->writeElement( 'SoftwareID', 'UD НАП Orders Exporter' );
-		$w->writeElement( 'SoftwareVersion', UD_NAP_EXPORTER_VERSION );
-
-		$w->startElement( 'Company' );
-		$w->writeElement( 'RegistrationNumber', $s['company_eik'] );
-		$w->writeElement( 'Name', $s['company_name'] );
-		if ( ! empty( $s['company_vat'] ) ) {
-			$w->writeElement( 'TaxRegistrationNumber', $s['company_vat'] );
+		$domain = $s['domain_name'];
+		if ( '' === $domain ) {
+			$domain = home_url( '/' );
 		}
-		$w->startElement( 'Address' );
-		$w->writeElement( 'StreetName', $s['company_address'] );
-		$w->writeElement( 'City', $s['company_city'] );
-		$w->writeElement( 'Country', $s['company_country'] );
-		$w->endElement(); // Address
-		$w->endElement(); // Company
 
-		$w->writeElement( 'ShopUniqueID', $s['shop_unique_id'] );
+		$this->refund_count = 0;
+		$this->refund_total = 0.0;
 
-		$w->startElement( 'SelectionCriteria' );
-		$w->writeElement( 'SelectionStartDate', $date_from );
-		$w->writeElement( 'SelectionEndDate', $date_to );
-		$w->endElement(); // SelectionCriteria
+		$out  = '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+		$out .= '<audit>' . "\n";
+		$out .= '  <eik>' . $this->esc( $s['company_eik'] ) . '</eik>' . "\n";
+		$out .= '  <e_shop_n>' . $this->esc( $s['shop_unique_id'] ) . '</e_shop_n>' . "\n";
+		$out .= '  <domain_name>' . $this->esc( $domain ) . '</domain_name>' . "\n";
+		$out .= '  <e_shop_type>' . $this->esc( $s['e_shop_type'] ) . '</e_shop_type>' . "\n";
+		$out .= '  <creation_date>' . gmdate( 'Y-m-d' ) . '</creation_date>' . "\n";
+		$out .= '  <mon>' . $this->esc( $mon ) . '</mon>' . "\n";
+		$out .= '  <god>' . $this->esc( $god ) . '</god>' . "\n";
+		$out .= '  <order>' . "\n";
 
-		$w->endElement(); // Header
-
-		// ---- Open SourceDocuments / SalesInvoices container ----
-		$w->startElement( 'SourceDocuments' );
-		$w->startElement( 'SalesInvoices' );
-
-		// We don't end the SourceDocuments / SalesInvoices / AuditFile here —
-		// the footer will. Flush the partial buffer.
-		$xml = $w->outputMemory( true );
-
-		// XMLWriter would normally close them all on flush; instead, we hand
-		// back exactly the prefix we want and the footer writer will print the
-		// matching closing tags.
-		return $xml;
+		return $out;
 	}
 
 	/**
-	 * Emit a single <Invoice> fragment for an order.
+	 * Emit a single <orderenum> block for a normal sale order.
 	 *
 	 * @param WC_Order $order
 	 * @return string
 	 */
 	public function write_invoice( WC_Order $order ) {
-		return $this->write_order_fragment( $order, false );
+		return $this->write_orderenum( $order, false );
 	}
 
 	/**
-	 * Emit a single <Invoice> fragment for a refund.
+	 * Emit a single <orderenum> block for a refund and add to the refund
+	 * footer totals.
 	 *
 	 * @param WC_Order_Refund $refund
 	 * @return string
 	 */
 	public function write_refund( $refund ) {
-		return $this->write_order_fragment( $refund, true );
+		$this->refund_count++;
+		$this->refund_total += abs( (float) $refund->get_amount() );
+
+		// Sample XML's refund section is just the aggregate <r_ord>/<r_total>
+		// in the footer; individual refunds don't get their own orderenum.
+		// We return empty string so the exporter skips writing per-item refund
+		// blocks. The footer uses the accumulators above.
+		return '';
 	}
 
 	/**
 	 * @param WC_Abstract_Order $order
-	 * @param bool              $is_refund
+	 * @param bool              $is_refund unused — see write_refund()
 	 * @return string
 	 */
-	private function write_order_fragment( $order, $is_refund ) {
+	private function write_orderenum( $order, $is_refund ) {
 		$s = $this->settings->get_all();
 
-		$w = new XMLWriter();
-		$w->openMemory();
-		$w->setIndent( true );
-		$w->setIndentString( '  ' );
+		$doc_n    = $this->doc_counter->ensure_for_order( $order );
+		$doc_date = $this->doc_counter->get_doc_date( $order );
 
-		$w->startElement( 'Invoice' );
+		$created  = $order->get_date_created();
+		$ord_d    = $created ? $created->date( 'Y-m-d' ) : $doc_date;
 
-		$w->writeElement( 'InvoiceNo', $order->get_order_number() );
-		$w->writeElement( 'InvoiceType', $is_refund ? 'RC' : 'FT' ); // Refund credit / standard.
-		$date = $order->get_date_created();
-		$w->writeElement( 'InvoiceDate', $date ? $date->date( 'Y-m-d' ) : '' );
+		$paym = $this->resolve_paym_code( $order );
 
-		// ---- Customer ----
-		$w->startElement( 'Customer' );
-		$customer_name = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
-		if ( '' === $customer_name ) {
-			$customer_name = $order->get_formatted_billing_full_name();
-		}
-		$w->writeElement( 'CustomerName', $customer_name );
-		if ( $order->get_billing_email() ) {
-			$w->writeElement( 'CustomerEmail', $order->get_billing_email() );
-		}
-		if ( $order->get_billing_country() ) {
-			$w->writeElement( 'CustomerCountry', $order->get_billing_country() );
-		}
-		if ( $order->get_billing_city() ) {
-			$w->writeElement( 'CustomerCity', $order->get_billing_city() );
-		}
-		$w->endElement(); // Customer
-
-		// ---- Lines ----
-		$w->startElement( 'Lines' );
-		$line_no = 0;
-		foreach ( $order->get_items() as $item ) {
-			/** @var WC_Order_Item_Product $item */
-			$line_no++;
-			$product = $item->get_product();
-			$qty     = (float) $item->get_quantity();
-			$total   = (float) $item->get_total();
-			$tax     = (float) $item->get_total_tax();
-			$net_unit = $qty ? $total / $qty : 0.0;
-
-			$w->startElement( 'Line' );
-			$w->writeElement( 'LineNumber', (string) $line_no );
-			$w->writeElement( 'ProductCode', $product ? (string) $product->get_sku() : '' );
-			$w->writeElement( 'ProductName', $item->get_name() );
-			$w->writeElement( 'Quantity', $this->fmt( $qty ) );
-			$w->writeElement( 'UnitPrice', $this->fmt( $net_unit ) );
-			$w->writeElement( 'LineAmount', $this->fmt( $total ) );
-
-			$vat_rate = $this->infer_vat_rate( $total, $tax );
-			$w->startElement( 'Tax' );
-			$w->writeElement( 'TaxType', 'VAT' );
-			$w->writeElement( 'TaxPercentage', $this->fmt( $vat_rate, 2 ) );
-			$w->writeElement( 'TaxAmount', $this->fmt( $tax ) );
-			$w->endElement(); // Tax
-
-			$w->endElement(); // Line
-		}
-		$w->endElement(); // Lines
-
-		// ---- Totals ----
-		$w->startElement( 'DocumentTotals' );
-		$w->writeElement( 'TaxPayable', $this->fmt( (float) $order->get_total_tax() ) );
-		$w->writeElement( 'NetTotal', $this->fmt( (float) $order->get_total() - (float) $order->get_total_tax() ) );
-		$w->writeElement( 'GrossTotal', $this->fmt( (float) $order->get_total() ) );
-		$w->writeElement( 'Currency', $order->get_currency() );
-		$w->endElement(); // DocumentTotals
-
-		// ---- Payment ----
-		$w->startElement( 'Payment' );
-		$w->writeElement( 'PaymentMethod', $order->get_payment_method() );
-		$provider_meta_key = $s['meta_payment_provider'];
-		$provider          = $provider_meta_key ? (string) $order->get_meta( $provider_meta_key ) : '';
-		if ( '' === $provider ) {
-			$provider = $order->get_payment_method_title();
-		}
-		$w->writeElement( 'PaymentProvider', $provider );
 		$txn_meta_key = $s['meta_transaction_id'] ? $s['meta_transaction_id'] : '_transaction_id';
-		$txn_id       = (string) $order->get_meta( $txn_meta_key );
-		if ( '' === $txn_id && method_exists( $order, 'get_transaction_id' ) ) {
-			$txn_id = (string) $order->get_transaction_id();
+		$trans_n      = (string) $order->get_meta( $txn_meta_key );
+		if ( '' === $trans_n && method_exists( $order, 'get_transaction_id' ) ) {
+			$trans_n = (string) $order->get_transaction_id();
 		}
-		$w->writeElement( 'TransactionID', $txn_id );
-		$w->endElement(); // Payment
 
-		$w->endElement(); // Invoice
+		$lines = $this->build_lines( $order );
 
-		return $w->outputMemory( true );
+		$ord_total1 = 0.0; // sum of net amounts.
+		$ord_vat    = 0.0; // sum of vat amounts.
+		$ord_total2 = 0.0; // sum of gross (= net + vat) on the lines.
+		foreach ( $lines as $line ) {
+			$ord_total1 += $line['net'];
+			$ord_vat    += $line['vat'];
+			$ord_total2 += $line['gross'];
+		}
+
+		// Coupon discount reported separately (in sample XML <ord_disc> is the
+		// coupon total — line amounts are already net-of-discount because we
+		// take them from WC line totals).
+		$ord_disc = (float) $order->get_discount_total();
+
+		$out  = '    <orderenum>' . "\n";
+		$out .= '      <ord_n>' . $this->esc( $order->get_order_number() ) . '</ord_n>' . "\n";
+		$out .= '      <ord_d>' . $this->esc( $ord_d ) . '</ord_d>' . "\n";
+		$out .= '      <doc_n>' . $this->esc( $doc_n ) . '</doc_n>' . "\n";
+		$out .= '      <doc_date>' . $this->esc( $doc_date ) . '</doc_date>' . "\n";
+		$out .= '      <art>' . "\n";
+		foreach ( $lines as $line ) {
+			$out .= '        <artenum>' . "\n";
+			$out .= '          <art_name>' . $this->esc( $line['name'] ) . '</art_name>' . "\n";
+			$out .= '          <art_quant>' . $this->fmt( $line['qty'] ) . '</art_quant>' . "\n";
+			$out .= '          <art_price>' . $this->fmt( $line['net'] ) . '</art_price>' . "\n";
+			$out .= '          <art_vat_rate>' . $this->fmt( $line['vat_rate'], 0 ) . '</art_vat_rate>' . "\n";
+			$out .= '          <art_vat>' . $this->fmt( $line['vat'] ) . '</art_vat>' . "\n";
+			$out .= '          <art_sum>' . $this->fmt( $line['gross'] ) . '</art_sum>' . "\n";
+			$out .= '        </artenum>' . "\n";
+		}
+		$out .= '      </art>' . "\n";
+		$out .= '      <ord_total1>' . $this->fmt( $ord_total1 ) . '</ord_total1>' . "\n";
+		$out .= '      <ord_disc>' . $this->fmt( $ord_disc ) . '</ord_disc>' . "\n";
+		$out .= '      <ord_vat>' . $this->fmt( $ord_vat ) . '</ord_vat>' . "\n";
+		$out .= '      <ord_total2>' . $this->fmt( $ord_total2 ) . '</ord_total2>' . "\n";
+		$out .= '      <paym>' . $this->esc( $paym ) . '</paym>' . "\n";
+		$out .= '      <trans_n>' . $this->esc( $trans_n ) . '</trans_n>' . "\n";
+		$out .= '      <proc_id></proc_id>' . "\n";
+		$out .= '    </orderenum>' . "\n";
+
+		return $out;
 	}
 
 	/**
-	 * Closing tags for the file.
-	 *
-	 * @return string
+	 * Close <order> + write the refund aggregate + close <audit>.
 	 */
 	public function write_footer() {
-		return "  </SalesInvoices>\n  </SourceDocuments>\n</AuditFile>\n";
+		$out  = '  </order>' . "\n";
+		$out .= '  <r_ord>' . (int) $this->refund_count . '</r_ord>' . "\n";
+		$out .= '  <r_total>' . $this->fmt( $this->refund_total ) . '</r_total>' . "\n";
+		$out .= '</audit>' . "\n";
+		return $out;
 	}
 
-	private function fmt( $value, $decimals = 2 ) {
-		return number_format( (float) $value, $decimals, '.', '' );
+	/**
+	 * Build the per-line art/artenum data from an order, matching the sample:
+	 * products + shipping ("Доставка") + any fee items ("Такса наложен платеж").
+	 * Prices are VAT-inclusive at the shop level, so we derive net + vat by
+	 * dividing by (1 + rate).
+	 *
+	 * @param WC_Abstract_Order $order
+	 * @return array<int,array{name:string,qty:float,net:float,vat:float,vat_rate:float,gross:float}>
+	 */
+	public function build_lines( $order ) {
+		$out = array();
+
+		foreach ( $order->get_items( 'line_item' ) as $item ) {
+			/** @var WC_Order_Item_Product $item */
+			$gross = (float) $item->get_total() + (float) $item->get_total_tax();
+			$vat   = (float) $item->get_total_tax();
+			$net   = $gross - $vat;
+			$qty   = (float) $item->get_quantity();
+			$rate  = $this->infer_rate( $net, $vat );
+
+			$out[] = array(
+				'name'     => $item->get_name(),
+				'qty'      => $qty ?: 1,
+				'net'      => $net,
+				'vat'      => $vat,
+				'vat_rate' => $rate,
+				'gross'    => $gross,
+			);
+		}
+
+		// Shipping line.
+		foreach ( $order->get_items( 'shipping' ) as $ship ) {
+			$gross = (float) $ship->get_total() + (float) $ship->get_total_tax();
+			$vat   = (float) $ship->get_total_tax();
+			$net   = $gross - $vat;
+			if ( $gross <= 0 ) {
+				continue;
+			}
+			$out[] = array(
+				'name'     => $ship->get_name() ?: 'Доставка',
+				'qty'      => 1,
+				'net'      => $net,
+				'vat'      => $vat,
+				'vat_rate' => $this->infer_rate( $net, $vat ),
+				'gross'    => $gross,
+			);
+		}
+
+		// Fee items (COD fee etc.).
+		foreach ( $order->get_items( 'fee' ) as $fee ) {
+			/** @var WC_Order_Item_Fee $fee */
+			$gross = (float) $fee->get_total() + (float) $fee->get_total_tax();
+			$vat   = (float) $fee->get_total_tax();
+			$net   = $gross - $vat;
+			if ( 0.0 === $gross ) {
+				continue;
+			}
+			$out[] = array(
+				'name'     => $fee->get_name(),
+				'qty'      => 1,
+				'net'      => $net,
+				'vat'      => $vat,
+				'vat_rate' => $this->infer_rate( $net, $vat ),
+				'gross'    => $gross,
+			);
+		}
+
+		return $out;
 	}
 
-	private function infer_vat_rate( $net, $tax ) {
+	/**
+	 * Map the order's WooCommerce payment method to the NAP paym code using
+	 * the admin-configured map. Falls back to "8 — Други".
+	 *
+	 * @param WC_Abstract_Order $order
+	 * @return string
+	 */
+	public function resolve_paym_code( $order ) {
+		$map    = (array) $this->settings->get( 'payment_map', array() );
+		$method = (string) $order->get_payment_method();
+		if ( '' !== $method && isset( $map[ $method ] ) ) {
+			return (string) $map[ $method ];
+		}
+		return '8';
+	}
+
+	private function infer_rate( $net, $vat ) {
 		if ( $net <= 0 ) {
 			return 0.0;
 		}
-		return round( ( $tax / $net ) * 100, 2 );
+		return round( ( $vat / $net ) * 100 );
+	}
+
+	private function fmt( $value, $decimals = 2 ) {
+		$n = round( (float) $value, $decimals );
+		// Strip trailing zeros so "37.00" → "37" and "30.80" → "30.8" —
+		// matches the reference XML which uses minimal decimals.
+		$s = number_format( $n, $decimals, '.', '' );
+		if ( $decimals > 0 && false !== strpos( $s, '.' ) ) {
+			$s = rtrim( $s, '0' );
+			$s = rtrim( $s, '.' );
+		}
+		return '' === $s ? '0' : $s;
+	}
+
+	private function esc( $value ) {
+		return htmlspecialchars( (string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8' );
 	}
 }

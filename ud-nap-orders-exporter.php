@@ -3,7 +3,7 @@
  * Plugin Name:       UD НАП Orders Exporter
  * Plugin URI:        https://unbelievable.digital/
  * Description:       Генерира стандартизиран одиторски XML файл (SAF-T) за докладване към НАП по Наредба Н-18, алтернативен метод за докладване за електронната търговия. Поддържа и експорт на поръчки в CSV таблица.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Unbelievable Digital
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'UD_NAP_EXPORTER_VERSION', '0.1.0' );
+define( 'UD_NAP_EXPORTER_VERSION', '0.2.0' );
 define( 'UD_NAP_EXPORTER_FILE', __FILE__ );
 define( 'UD_NAP_EXPORTER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'UD_NAP_EXPORTER_URL', plugin_dir_url( __FILE__ ) );
@@ -36,6 +36,11 @@ function ud_nap_exporter_bootstrap() {
 	if ( ! class_exists( 'WooCommerce' ) ) {
 		add_action( 'admin_notices', 'ud_nap_exporter_missing_wc_notice' );
 		return;
+	}
+
+	$autoload = UD_NAP_EXPORTER_PATH . 'vendor/autoload.php';
+	if ( file_exists( $autoload ) ) {
+		require_once $autoload;
 	}
 
 	require_once UD_NAP_EXPORTER_PATH . 'includes/class-ud-nap-exporter-plugin.php';

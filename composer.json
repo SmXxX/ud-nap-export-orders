@@ -1,0 +1,18 @@
+{
+    "name": "unbelievabledigital/ud-nap-orders-exporter",
+    "description": "Bulgarian NAP Ordinance N-18 audit XML exporter and fiscal receipt generator for WooCommerce.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=7.4",
+        "dompdf/dompdf": "^3.0",
+        "endroid/qr-code": "^5.0"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": false
+        }
+    }
+}

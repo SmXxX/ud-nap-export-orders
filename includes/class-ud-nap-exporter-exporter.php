@@ -27,7 +27,7 @@ class UD_NAP_Exporter_Exporter {
 	public function __construct( UD_NAP_Exporter_Settings $settings ) {
 		$this->settings = $settings;
 		$this->query    = new UD_NAP_Exporter_Query();
-		$this->writer   = new UD_NAP_Exporter_XML_Writer( $settings );
+		$this->writer   = new UD_NAP_Exporter_XML_Writer( $settings, new UD_NAP_Exporter_Doc_Counter( $settings ) );
 	}
 
 	/**

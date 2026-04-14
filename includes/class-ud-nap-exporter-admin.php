@@ -185,13 +185,29 @@ class UD_NAP_Exporter_Admin {
 				<input type="hidden" name="<?php echo esc_attr( $opt ); ?>[_section]" value="xml" />
 
 				<h3><?php esc_html_e( 'Данни за фирмата', 'ud-nap-orders-exporter' ); ?></h3>
-				<p class="description"><?php esc_html_e( 'Използват се в Header секцията на SAF-T файла.', 'ud-nap-orders-exporter' ); ?></p>
+				<p class="description"><?php esc_html_e( 'Използват се в header-а на audit XML файла и в касовия бон.', 'ud-nap-orders-exporter' ); ?></p>
 				<table class="form-table" role="presentation">
 					<tbody>
 						<tr>
-							<th scope="row"><label><?php esc_html_e( 'Уникален идентификатор на магазина', 'ud-nap-orders-exporter' ); ?></label></th>
-							<td><input type="text" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[shop_unique_id]" value="<?php echo esc_attr( $s['shop_unique_id'] ); ?>" />
-								<p class="description"><?php esc_html_e( 'Регистрационен номер, издаден от НАП за Вашия онлайн магазин.', 'ud-nap-orders-exporter' ); ?></p>
+							<th scope="row"><label><?php esc_html_e( 'Уникален идентификатор на магазина (e_shop_n)', 'ud-nap-orders-exporter' ); ?></label></th>
+							<td><input type="text" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[shop_unique_id]" value="<?php echo esc_attr( $s['shop_unique_id'] ); ?>" placeholder="RF0000000" />
+								<p class="description"><?php esc_html_e( 'Регистрационен номер, издаден от НАП за Вашия онлайн магазин (RF…).', 'ud-nap-orders-exporter' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><label><?php esc_html_e( 'Вид електронен магазин (e_shop_type)', 'ud-nap-orders-exporter' ); ?></label></th>
+							<td>
+								<select name="<?php echo esc_attr( $opt ); ?>[e_shop_type]">
+									<?php foreach ( UD_NAP_Exporter_Settings::e_shop_types() as $code => $label ) : ?>
+										<option value="<?php echo esc_attr( $code ); ?>" <?php selected( (string) $s['e_shop_type'], (string) $code ); ?>><?php echo esc_html( $label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><label><?php esc_html_e( 'Домейн', 'ud-nap-orders-exporter' ); ?></label></th>
+							<td><input type="url" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[domain_name]" value="<?php echo esc_attr( $s['domain_name'] ); ?>" placeholder="https://example.com/" />
+								<p class="description"><?php esc_html_e( 'Пълен URL на магазина (със схема). Ако е празно, се използва адресът на сайта.', 'ud-nap-orders-exporter' ); ?></p>
 							</td>
 						</tr>
 						<?php
@@ -202,14 +218,75 @@ class UD_NAP_Exporter_Admin {
 							'company_address' => __( 'Адрес', 'ud-nap-orders-exporter' ),
 							'company_city'    => __( 'Град', 'ud-nap-orders-exporter' ),
 							'company_country' => __( 'Код на държава', 'ud-nap-orders-exporter' ),
+							'company_email'   => __( 'Имейл', 'ud-nap-orders-exporter' ),
 						);
 						foreach ( $fields as $key => $label ) :
 							?>
 							<tr>
 								<th scope="row"><label><?php echo esc_html( $label ); ?></label></th>
-								<td><input type="text" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[<?php echo esc_attr( $key ); ?>]" value="<?php echo esc_attr( $s[ $key ] ); ?>" /></td>
+								<td><input type="<?php echo 'company_email' === $key ? 'email' : 'text'; ?>" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[<?php echo esc_attr( $key ); ?>]" value="<?php echo esc_attr( $s[ $key ] ); ?>" /></td>
 							</tr>
 						<?php endforeach; ?>
+						<tr>
+							<th scope="row"><label><?php esc_html_e( 'Начало на номерацията на документи (doc_n)', 'ud-nap-orders-exporter' ); ?></label></th>
+							<td><input type="number" min="1" step="1" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[doc_n_start]" value="<?php echo esc_attr( $s['doc_n_start'] ); ?>" />
+								<p class="description"><?php esc_html_e( 'Броячът започва от тази стойност при първия издаден документ. След това се увеличава автоматично и никога не се използва повторно.', 'ud-nap-orders-exporter' ); ?></p>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+
+				<h3><?php esc_html_e( 'Съпоставяне на методите на плащане с кодове по НАП', 'ud-nap-orders-exporter' ); ?></h3>
+				<p class="description"><?php esc_html_e( 'За всеки активен или използван метод на плащане изберете кода, който да се записва в <paym>. Неизбраните методи се отчитат с код 8 — Други.', 'ud-nap-orders-exporter' ); ?></p>
+				<table class="form-table ud-nap-paym-map" role="presentation">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Метод на плащане', 'ud-nap-orders-exporter' ); ?></th>
+							<th><?php esc_html_e( 'НАП код (paym)', 'ud-nap-orders-exporter' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php
+						$gateways_all = array();
+						if ( function_exists( 'WC' ) && WC()->payment_gateways() ) {
+							foreach ( WC()->payment_gateways()->payment_gateways() as $gid => $gw ) {
+								$label             = method_exists( $gw, 'get_method_title' ) ? $gw->get_method_title() : $gid;
+								$gateways_all[ $gid ] = $label ?: $gid;
+							}
+						}
+						foreach ( $this->settings->get_known_payment_gateway_ids() as $gid ) {
+							if ( ! isset( $gateways_all[ $gid ] ) ) {
+								$gateways_all[ $gid ] = $gid;
+							}
+						}
+						ksort( $gateways_all );
+						$map = (array) $s['payment_map'];
+						if ( empty( $gateways_all ) ) :
+							?>
+							<tr><td colspan="2"><em><?php esc_html_e( 'Няма открити методи на плащане.', 'ud-nap-orders-exporter' ); ?></em></td></tr>
+							<?php
+						else :
+							foreach ( $gateways_all as $gid => $gw_label ) :
+								$current = isset( $map[ $gid ] ) ? (string) $map[ $gid ] : '';
+								?>
+								<tr>
+									<th scope="row">
+										<label><?php echo esc_html( $gw_label ); ?></label>
+										<br /><code style="font-weight:normal;"><?php echo esc_html( $gid ); ?></code>
+									</th>
+									<td>
+										<select name="<?php echo esc_attr( $opt ); ?>[payment_map][<?php echo esc_attr( $gid ); ?>]">
+											<option value=""><?php esc_html_e( '— Не е зададено (→ 8 Други) —', 'ud-nap-orders-exporter' ); ?></option>
+											<?php foreach ( UD_NAP_Exporter_Settings::paym_codes() as $code => $code_label ) : ?>
+												<option value="<?php echo esc_attr( $code ); ?>" <?php selected( $current, (string) $code ); ?>><?php echo esc_html( $code_label ); ?></option>
+											<?php endforeach; ?>
+										</select>
+									</td>
+								</tr>
+							<?php
+							endforeach;
+						endif;
+						?>
 					</tbody>
 				</table>
 
