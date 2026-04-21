@@ -15,12 +15,17 @@ class UD_NAP_Exporter_Admin {
 	const PAGE_EXPORT_XML = 'ud-nap-export-xml';
 	const PAGE_EXPORT_CSV = 'ud-nap-export-csv';
 	const PAGE_SETTINGS   = 'ud-nap-settings';
+	const PAGE_LICENSE    = 'ud-nap-orders-exporter-license';
 
 	/** @var UD_NAP_Exporter_Settings */
 	private $settings;
 
-	public function __construct( UD_NAP_Exporter_Settings $settings ) {
-		$this->settings = $settings;
+	/** @var WP_Update_Checker|null */
+	private $license_checker;
+
+	public function __construct( UD_NAP_Exporter_Settings $settings, $license_checker = null ) {
+		$this->settings        = $settings;
+		$this->license_checker = $license_checker;
 	}
 
 	public function hooks() {
@@ -97,6 +102,18 @@ class UD_NAP_Exporter_Admin {
 				$cap,
 				self::PAGE_SETTINGS,
 				array( $this, 'render_settings_page' )
+			);
+		}
+
+		// License tab — uses the update/license SDK renderer.
+		if ( $this->license_checker ) {
+			add_submenu_page(
+				$first_slug,
+				__( 'Лиценз', 'ud-nap-orders-exporter' ),
+				__( 'Лиценз', 'ud-nap-orders-exporter' ),
+				$cap,
+				self::PAGE_LICENSE,
+				array( $this->license_checker, 'render_license_page' )
 			);
 		}
 	}

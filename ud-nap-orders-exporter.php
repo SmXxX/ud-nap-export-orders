@@ -3,7 +3,7 @@
  * Plugin Name:       UD НАП Orders Exporter
  * Plugin URI:        https://unbelievable.digital/
  * Description:       Генерира стандартизиран одиторски XML файл (SAF-T) за докладване към НАП по Наредба Н-18, алтернативен метод за докладване за електронната търговия. Поддържа и експорт на поръчки в CSV таблица.
- * Version:           0.3.0
+ * Version:           0.4.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Unbelievable Digital
@@ -22,31 +22,26 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 require_once __DIR__ . '/class-wp-update-checker.php';
 
-$ud_nap_update_checker = new WP_Update_Checker(
+$GLOBALS['ud_nap_update_checker'] = new WP_Update_Checker(
 	'https://wp-base.unbelievable.digital',
 	__FILE__,
 	'ud-nap-orders-exporter'
 );
 
-// The SDK hardcodes its parent menu slug, so unhook its default placement
-// and register the license page as a submenu of our own plugin menu instead.
+// The SDK auto-registers its license page under a hardcoded parent slug that
+// doesn't exist here. Unhook it before it fires (priority 9 < default 10) so
+// the Admin class can register the page under our own menu instead.
 add_action(
 	'admin_menu',
-	function () use ( $ud_nap_update_checker ) {
-		remove_action( 'admin_menu', array( $ud_nap_update_checker, 'register_license_page' ) );
-		add_submenu_page(
-			'ud-nap-export-xml',
-			__( 'Лиценз', 'ud-nap-orders-exporter' ),
-			__( 'Лиценз', 'ud-nap-orders-exporter' ),
-			'manage_options',
-			'ud-nap-orders-exporter-license',
-			array( $ud_nap_update_checker, 'render_license_page' )
-		);
+	function () {
+		if ( isset( $GLOBALS['ud_nap_update_checker'] ) ) {
+			remove_action( 'admin_menu', array( $GLOBALS['ud_nap_update_checker'], 'register_license_page' ) );
+		}
 	},
-	20
+	9
 );
 
-define( 'UD_NAP_EXPORTER_VERSION', '0.3.0' );
+define( 'UD_NAP_EXPORTER_VERSION', '0.4.0' );
 define( 'UD_NAP_EXPORTER_FILE', __FILE__ );
 define( 'UD_NAP_EXPORTER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'UD_NAP_EXPORTER_URL', plugin_dir_url( __FILE__ ) );

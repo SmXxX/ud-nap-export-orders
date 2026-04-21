@@ -51,7 +51,7 @@ final class UD_NAP_Exporter_Plugin {
 
 	private function init_components() {
 		$this->settings = new UD_NAP_Exporter_Settings();
-		$this->admin    = new UD_NAP_Exporter_Admin( $this->settings );
+		$this->admin    = new UD_NAP_Exporter_Admin( $this->settings, $GLOBALS['ud_nap_update_checker'] ?? null );
 		$this->ajax     = new UD_NAP_Exporter_Ajax( $this->settings );
 
 		$this->settings->hooks();
