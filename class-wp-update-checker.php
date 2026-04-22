@@ -280,7 +280,7 @@ if (!class_exists('WP_Update_Checker')) {
         public function register_license_page(): void
         {
             add_submenu_page(
-                'bgdc-settings',
+                $this->plugin_slug,
                 'License',
                 'License',
                 'manage_options',
