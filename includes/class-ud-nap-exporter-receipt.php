@@ -125,10 +125,7 @@ class UD_NAP_Exporter_Receipt {
 		$paym_title = $order->get_payment_method_title();
 
 		$txn_meta = $s['meta_transaction_id'] ? $s['meta_transaction_id'] : '_transaction_id';
-		$trans_n  = (string) $order->get_meta( $txn_meta );
-		if ( '' === $trans_n && method_exists( $order, 'get_transaction_id' ) ) {
-			$trans_n = (string) $order->get_transaction_id();
-		}
+		$trans_n  = $this->resolve_transaction_id( $order, $txn_meta );
 
 		// QR payload: per the client's reference receipt, this is just the
 		// document date formatted as YYYYMMDD.
@@ -163,9 +160,10 @@ class UD_NAP_Exporter_Receipt {
 				.company { text-align: center; margin-bottom: 8px; line-height: 1.35; }
 				.company .name { font-weight: bold; }
 				.cur-head { text-align: right; font-size: 8pt; margin: 4px 0 2px; }
-				table.items { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
-				table.items td { vertical-align: top; padding: 2px 0; font-size: 9pt; }
-				table.items td.amt { text-align: right; white-space: nowrap; }
+				table.items { width: 100%; border-collapse: collapse; margin-bottom: 4px; table-layout: fixed; }
+				table.items td { vertical-align: top; padding: 2px 0; font-size: 9pt; word-wrap: break-word; }
+				table.items td.name { width: 60%; padding-right: 6px; }
+				table.items td.amt { text-align: right; white-space: nowrap; width: 40%; }
 				.qty-row td { padding-top: 4px; font-size: 8.5pt; color: #333; }
 				.sep { border-top: 1px dashed #333; margin: 6px 0; }
 				table.totals { width: 100%; border-collapse: collapse; }
@@ -214,7 +212,7 @@ class UD_NAP_Exporter_Receipt {
 						<td colspan="2"><?php echo esc_html( $this->fmt3( $l['qty'] ) ); ?> x €<?php echo esc_html( $this->fmt_price( $l['gross'] ) ); ?> / <?php echo esc_html( $this->fmt_price( $unit_bgn ) ); ?>лв</td>
 					</tr>
 					<tr>
-						<td><?php echo esc_html( $l['name'] ); ?></td>
+						<td class="name"><?php echo esc_html( $l['name'] ); ?></td>
 						<td class="amt">€<?php echo esc_html( $this->fmt_price( $l['gross'] ) ); ?> / <?php echo esc_html( $this->fmt_price( $unit_bgn ) ); ?>лв B</td>
 					</tr>
 				<?php endforeach; ?>
@@ -264,6 +262,50 @@ class UD_NAP_Exporter_Receipt {
 
 	private function fmt3( $v ) {
 		return number_format( (float) $v, 3, '.', '' );
+	}
+
+	/**
+	 * Resolve a meaningful transaction id for the receipt. Tries the
+	 * configured meta key first, then known gateway-specific keys (currently
+	 * Borica EMV 3DS — webops_borica_emv_3ds writes via update_post_meta()
+	 * which is invisible to $order->get_meta() under HPOS without compatibility
+	 * mode, hence the get_post_meta() fallback). Values that look like
+	 * 1–2-digit response codes (e.g. Borica "00" = approved) are skipped —
+	 * they are status codes, not transaction references.
+	 *
+	 * @return string
+	 */
+	private function resolve_transaction_id( WC_Order $order, $configured_meta_key ) {
+		$candidates = array( '_ud_nap_manual_txn_id' );
+		if ( $configured_meta_key ) {
+			$candidates[] = $configured_meta_key;
+		}
+		$candidates[] = '_wo_borica_emv_3ds_RRN';
+		$candidates[] = '_wo_borica_emv_3ds_INT_REF';
+
+		foreach ( array_unique( $candidates ) as $key ) {
+			$value = (string) $order->get_meta( $key );
+			if ( '' === $value ) {
+				$value = (string) get_post_meta( $order->get_id(), $key, true );
+			}
+			$value = trim( $value );
+			if ( '' !== $value && ! $this->looks_like_response_code( $value ) ) {
+				return $value;
+			}
+		}
+
+		if ( method_exists( $order, 'get_transaction_id' ) ) {
+			$value = trim( (string) $order->get_transaction_id() );
+			if ( '' !== $value && ! $this->looks_like_response_code( $value ) ) {
+				return $value;
+			}
+		}
+
+		return '';
+	}
+
+	private function looks_like_response_code( $value ) {
+		return (bool) preg_match( '/^\d{1,2}$/', (string) $value );
 	}
 
 	private function build_qr_data_uri( $payload ) {

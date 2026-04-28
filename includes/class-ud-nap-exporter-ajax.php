@@ -54,6 +54,10 @@ class UD_NAP_Exporter_Ajax {
 
 		// Attach receipt PDF to customer order emails.
 		add_filter( 'woocommerce_email_attachments', array( $this, 'attach_receipt_to_emails' ), 10, 3 );
+
+		// Save manual RRN / transaction id entered on the order edit screen
+		// (HPOS + classic both fire woocommerce_process_shop_order_meta).
+		add_action( 'woocommerce_process_shop_order_meta', array( $this, 'save_manual_txn_id' ) );
 	}
 
 	/**
@@ -133,9 +137,64 @@ class UD_NAP_Exporter_Ajax {
 		if ( ! $order ) {
 			return;
 		}
-		$url = $this->receipt_url( $order->get_id() );
+		$url        = $this->receipt_url( $order->get_id() );
+		$manual_txn = (string) $order->get_meta( '_ud_nap_manual_txn_id' );
+
 		echo '<p>' . esc_html__( 'Генерира PDF документ за регистриране на продажба по Наредба Н-18.', 'ud-nap-orders-exporter' ) . '</p>';
+
+		wp_nonce_field( 'ud_nap_save_manual_txn_' . $order->get_id(), '_ud_nap_manual_txn_nonce' );
+		echo '<p style="margin-bottom:4px;"><label for="ud_nap_manual_txn_id" style="display:block;font-weight:600;">'
+			. esc_html__( 'Ръчно въвеждане на RRN / Номер на транзакция', 'ud-nap-orders-exporter' )
+			. '</label></p>';
+		echo '<p style="margin-top:0;"><input type="text" id="ud_nap_manual_txn_id" name="ud_nap_manual_txn_id" value="'
+			. esc_attr( $manual_txn ) . '" style="width:100%;" placeholder="' . esc_attr__( 'напр. RRN от Борика', 'ud-nap-orders-exporter' ) . '" /></p>';
+		echo '<p class="description" style="font-size:11px;color:#666;margin:0 0 10px;">'
+			. esc_html__( 'Попълнете, ако платежният шлюз не е записал номера автоматично. Записва се при "Update" на поръчката; кешираното PDF ще се регенерира автоматично.', 'ud-nap-orders-exporter' )
+			. '</p>';
+
 		echo '<p><a class="button button-primary" style="padding:4px 14px;" target="_blank" href="' . esc_url( $url ) . '">' . esc_html__( 'Отвори разписка (PDF)', 'ud-nap-orders-exporter' ) . '</a></p>';
+	}
+
+	/**
+	 * Persist a manually-entered transaction reference (e.g. RRN looked up
+	 * from the Borica merchant portal when the gateway didn't capture it).
+	 * Stored as `_ud_nap_manual_txn_id`; consumed first by the receipt
+	 * resolver. On change we delete the cached PDF for this order so the
+	 * next render reflects the new value.
+	 *
+	 * @param int $order_id
+	 */
+	public function save_manual_txn_id( $order_id ) {
+		if ( ! isset( $_POST['_ud_nap_manual_txn_nonce'] ) ) {
+			return;
+		}
+		if ( ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_ud_nap_manual_txn_nonce'] ) ), 'ud_nap_save_manual_txn_' . $order_id ) ) {
+			return;
+		}
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
+		}
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) {
+			return;
+		}
+
+		$new = isset( $_POST['ud_nap_manual_txn_id'] ) ? sanitize_text_field( wp_unslash( $_POST['ud_nap_manual_txn_id'] ) ) : '';
+		$old = (string) $order->get_meta( '_ud_nap_manual_txn_id' );
+		if ( $new === $old ) {
+			return;
+		}
+
+		$order->update_meta_data( '_ud_nap_manual_txn_id', $new );
+		$order->save();
+
+		$uploads = wp_upload_dir();
+		$dir     = trailingslashit( $uploads['basedir'] ) . 'ud-nap-exports/receipts';
+		if ( is_dir( $dir ) ) {
+			foreach ( (array) glob( $dir . '/nap-receipt-' . (int) $order_id . '-*.pdf' ) as $file ) {
+				@unlink( $file );
+			}
+		}
 	}
 
 	/**
