@@ -295,12 +295,12 @@ class UD_NAP_Exporter_Settings {
 
 			// Payment method → NAP paym code map.
 			$map_in  = isset( $input['payment_map'] ) && is_array( $input['payment_map'] ) ? $input['payment_map'] : array();
-			$valid_codes = array_keys( self::paym_codes() );
+			$valid_codes = self::paym_codes();
 			$map_out = array();
 			foreach ( $map_in as $gateway_id => $code ) {
 				$gateway_id = sanitize_key( $gateway_id );
 				$code       = sanitize_text_field( $code );
-				if ( '' !== $gateway_id && in_array( $code, $valid_codes, true ) ) {
+				if ( '' !== $gateway_id && isset( $valid_codes[ $code ] ) ) {
 					$map_out[ $gateway_id ] = $code;
 				}
 			}
