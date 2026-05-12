@@ -138,7 +138,11 @@ class UD_NAP_Exporter_Receipt {
 			$ord_net += $l['net'];
 			$ord_vat += $l['vat'];
 		}
-		$ord_gross = $ord_net + $ord_vat;
+		// Line items report pre-discount catalog values, so the receipt
+		// shows discount on a separate line and subtracts it from the grand
+		// total to match what the customer actually paid.
+		$ord_disc  = (float) $order->get_discount_total() + (float) $order->get_discount_tax();
+		$ord_gross = $ord_net + $ord_vat - $ord_disc;
 
 		ob_start();
 		?>
@@ -225,6 +229,12 @@ class UD_NAP_Exporter_Receipt {
 					<td class="label">Междинна сума:</td>
 					<td class="amt">€<?php echo esc_html( $this->fmt_price( $ord_net ) ); ?> / <?php echo esc_html( $this->fmt_price( $ord_net * self::EUR_TO_BGN ) ); ?>лв</td>
 				</tr>
+				<?php if ( $ord_disc > 0 ) : ?>
+					<tr>
+						<td class="label">Отстъпка:</td>
+						<td class="amt">−€<?php echo esc_html( $this->fmt_price( $ord_disc ) ); ?> / −<?php echo esc_html( $this->fmt_price( $ord_disc * self::EUR_TO_BGN ) ); ?>лв</td>
+					</tr>
+				<?php endif; ?>
 				<tr>
 					<td class="label">ДДС:</td>
 					<td class="amt">€<?php echo esc_html( $this->fmt_price( $ord_vat ) ); ?> / <?php echo esc_html( $this->fmt_price( $ord_vat * self::EUR_TO_BGN ) ); ?>лв</td>

@@ -139,19 +139,19 @@ class UD_NAP_Exporter_XML_Writer {
 
 		$lines = $this->build_lines( $order );
 
-		$ord_total1 = 0.0; // sum of net amounts.
-		$ord_vat    = 0.0; // sum of vat amounts.
-		$ord_total2 = 0.0; // sum of gross (= net + vat) on the lines.
+		$ord_total1 = 0.0; // sum of net amounts (pre-discount).
+		$ord_vat    = 0.0; // sum of vat amounts (pre-discount).
 		foreach ( $lines as $line ) {
 			$ord_total1 += $line['net'];
 			$ord_vat    += $line['vat'];
-			$ord_total2 += $line['gross'];
 		}
 
-		// Coupon discount reported separately (in sample XML <ord_disc> is the
-		// coupon total — line amounts are already net-of-discount because we
-		// take them from WC line totals).
-		$ord_disc = (float) $order->get_discount_total();
+		// NAP identity: ord_total2 = ord_total1 − ord_disc + ord_vat.
+		// Line items report pre-discount values, so ord_disc must be the full
+		// gross discount (net + vat portion) for the identity to balance to
+		// what the customer actually paid.
+		$ord_disc   = (float) $order->get_discount_total() + (float) $order->get_discount_tax();
+		$ord_total2 = $ord_total1 - $ord_disc + $ord_vat;
 
 		$out  = '    <orderenum>' . "\n";
 		$out .= '      <ord_n>' . $this->esc( $order->get_order_number() ) . '</ord_n>' . "\n";
@@ -207,9 +207,12 @@ class UD_NAP_Exporter_XML_Writer {
 
 		foreach ( $order->get_items( 'line_item' ) as $item ) {
 			/** @var WC_Order_Item_Product $item */
-			$gross = (float) $item->get_total() + (float) $item->get_total_tax();
-			$vat   = (float) $item->get_total_tax();
-			$net   = $gross - $vat;
+			// Use subtotal (pre-discount) so <art_price>/<art_sum> represent the
+			// catalog price. Coupon discount is reported once at the order level
+			// via <ord_disc>; otherwise it would be subtracted twice.
+			$net   = (float) $item->get_subtotal();
+			$vat   = (float) $item->get_subtotal_tax();
+			$gross = $net + $vat;
 			$qty   = (float) $item->get_quantity();
 			$rate  = $this->infer_rate( $net, $vat );
 
