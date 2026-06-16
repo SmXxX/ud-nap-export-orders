@@ -54,8 +54,11 @@ class UD_NAP_Exporter_Doc_Counter {
 
 		$order->update_meta_data( self::ORDER_META_DOC_N, $next );
 		// Persist the document date alongside the number so reprints always
-		// show the original generation date.
-		$order->update_meta_data( self::ORDER_META_DOC_DATE, gmdate( 'Y-m-d' ) );
+		// show the original generation date. Use WordPress local time (not
+		// gmdate/UTC): НАП requires doc_date >= ord_d, and ord_d is the order's
+		// local creation date. A UTC snapshot lands on the previous day for
+		// orders placed just after local midnight, which НАП rejects.
+		$order->update_meta_data( self::ORDER_META_DOC_DATE, current_time( 'Y-m-d' ) );
 		$order->save_meta_data();
 
 		return $next;
@@ -70,12 +73,24 @@ class UD_NAP_Exporter_Doc_Counter {
 	 * @return string Y-m-d
 	 */
 	public function get_doc_date( $order ) {
-		$d = (string) $order->get_meta( self::ORDER_META_DOC_DATE );
-		if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $d ) ) {
-			return $d;
-		}
 		$created = $order->get_date_created();
-		return $created ? $created->date( 'Y-m-d' ) : gmdate( 'Y-m-d' );
+		$ord_d   = $created ? $created->date( 'Y-m-d' ) : '';
+
+		$d = (string) $order->get_meta( self::ORDER_META_DOC_DATE );
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $d ) ) {
+			// No (valid) stored date: fall back to the order's local creation
+			// date, or today's local date as a last resort.
+			$d = $ord_d ? $ord_d : current_time( 'Y-m-d' );
+		}
+
+		// НАП requires doc_date >= ord_d. Older data may have a doc_date stored
+		// in UTC that is one day before the order's local date (orders placed
+		// just after local midnight). Clamp up to ord_d so the file validates.
+		if ( '' !== $ord_d && $d < $ord_d ) {
+			$d = $ord_d;
+		}
+
+		return $d;
 	}
 
 	/**
